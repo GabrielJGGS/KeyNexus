@@ -52,7 +52,7 @@ public partial class MainWindow : Window
         _keyboardItems.Clear();
 
         // Utilizamos o DeviceMonitor criado via App
-        var app = (App)Application.Current;
+        var app = (App)System.Windows.Application.Current;
         var deviceMonitor = (DeviceMonitor)app.GetType().GetField("deviceMonitor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(app)!;
 
         var devices = deviceMonitor.GetConnectedKeyboardsNames();
@@ -86,7 +86,7 @@ public partial class MainWindow : Window
 
     private void LayoutComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is ComboBox cb && cb.DataContext is KeyboardItem item)
+        if (sender is System.Windows.Controls.ComboBox cb && cb.DataContext is KeyboardItem item)
         {
             item.SaveLayout();
         }
