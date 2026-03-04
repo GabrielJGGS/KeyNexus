@@ -6,7 +6,7 @@ using System.Drawing;
 
 namespace KeyNexus;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private Forms.NotifyIcon notifyIcon = null!;
     private MainWindow? mainWindow;
