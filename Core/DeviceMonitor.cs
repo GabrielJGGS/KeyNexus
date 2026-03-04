@@ -168,10 +168,37 @@ public class DeviceMonitor : IDisposable
             uint handleValue = Convert.ToUInt32(hklHex, 16);
             IntPtr hkl = new IntPtr(unchecked((int)handleValue));
 
-            if (fgWindow != IntPtr.Zero)
+            if (fgWindow == IntPtr.Zero) return;
+
+            // Obtém a thread da janela em foco e a thread atual
+            uint targetThreadId = NativeMethods.GetWindowThreadProcessId(fgWindow, out _);
+            uint currentThreadId = NativeMethods.GetCurrentThreadId();
+
+            bool attached = false;
+            try
             {
+                // Anexa a thread atual à thread da janela alvo
+                // Isso permite que ActivateKeyboardLayout atue diretamente
+                if (targetThreadId != currentThreadId)
+                {
+                    attached = NativeMethods.AttachThreadInput(currentThreadId, targetThreadId, true);
+                }
+
+                // Ativa o layout diretamente na thread (mais confiável que PostMessage)
+                IntPtr result = NativeMethods.ActivateKeyboardLayout(hkl, NativeMethods.KLF_SETFORPROCESS);
+
+                // Fallback: também envia PostMessage caso ActivateKeyboardLayout não seja suficiente
                 NativeMethods.PostMessage(fgWindow, NativeMethods.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, hkl);
-                Logger.Info($"Layout alterado para {hklHex} na janela 0x{fgWindow:X}");
+
+                Logger.Info($"Layout alterado para {hklHex} na janela 0x{fgWindow:X} (Thread: {targetThreadId})");
+            }
+            finally
+            {
+                // Desanexa as threads
+                if (attached)
+                {
+                    NativeMethods.AttachThreadInput(currentThreadId, targetThreadId, false);
+                }
             }
         }
         catch (Exception ex)

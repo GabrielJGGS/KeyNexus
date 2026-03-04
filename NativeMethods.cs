@@ -90,6 +90,17 @@ internal static class NativeMethods
     public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr ActivateKeyboardLayout(IntPtr hkl, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    public const uint KLF_SETFORPROCESS = 0x00000100;
+
+    [DllImport("user32.dll")]
     public static extern int GetKeyboardLayoutList(int nBuff, [Out] IntPtr[] lpList);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
