@@ -64,7 +64,36 @@ public partial class MainWindow : Window
                     // O LCID está nos 16 bits mais baixos do HKL
                     int lcid = (int)(hkl64 & 0xFFFF);
                     var culture = System.Globalization.CultureInfo.GetCultureInfo(lcid);
-                    layoutName = $"{culture.NativeName} (HKL: {hexHkl})";
+                    
+                    // Nomes conhecidos para melhorar a experiência do usuário baseado nos layouts da sua print
+                    string specificName = hexHkl switch {
+                        "F0010416" => "Estados Unidos (internacional)",
+                        "04160416" => "Brasil ABNT2",
+                        "08160416" => "Portugal",
+                        "04160816" => "Brasil ABNT",
+                        "00000409" => "EUA (Padrão)",
+                        _ => "Desconhecido"
+                    };
+
+                    if (specificName != "Desconhecido") {
+                        layoutName = $"{culture.NativeName} - {specificName} (HKL: {hexHkl})";
+                    } else {
+                        // Tenta buscar no registro do Windows o nome oficial
+                        #pragma warning disable CA1416
+                        string? regName = Microsoft.Win32.Registry.GetValue($@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Keyboard Layouts\{hexHkl}", "Layout Text", null) as string;
+                        if (string.IsNullOrEmpty(regName)) {
+                            // Tenta com zero-pad no LCID caso o HKL primario falhe
+                            string lowLcid = (hkl64 & 0xFFFF).ToString("X8");
+                            regName = Microsoft.Win32.Registry.GetValue($@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Keyboard Layouts\{lowLcid}", "Layout Text", null) as string;
+                        }
+                        #pragma warning restore CA1416
+                        
+                        if (!string.IsNullOrEmpty(regName)) {
+                            layoutName = $"{culture.NativeName} - {regName} (HKL: {hexHkl})";
+                        } else {
+                            layoutName = $"{culture.NativeName} (HKL: {hexHkl})";
+                        }
+                    }
                 }
                 catch 
                 {
@@ -73,6 +102,9 @@ public partial class MainWindow : Window
 
                 _availableLayouts.Add(new KeyboardLayoutItem { Hkl = hexHkl, Name = layoutName });
             }
+            
+            // Adicionar a opção de desvincular
+            _availableLayouts.Insert(0, new KeyboardLayoutItem { Hkl = string.Empty, Name = "-- Nenhum (Desvincular Layout) --" });
         }
     }
 
@@ -157,9 +189,9 @@ public class KeyboardItem : INotifyPropertyChanged
 
     public void SaveLayout()
     {
-        if (!string.IsNullOrEmpty(DeviceName) && !string.IsNullOrEmpty(SelectedLayoutHkl))
+        if (!string.IsNullOrEmpty(DeviceName))
         {
-             _monitor.Config.SetLayoutForDevice(DeviceName, SelectedLayoutHkl);
+             _monitor.Config.SetLayoutForDevice(DeviceName, SelectedLayoutHkl ?? string.Empty);
         }
     }
 

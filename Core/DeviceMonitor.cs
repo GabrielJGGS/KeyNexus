@@ -12,6 +12,7 @@ public class DeviceMonitor : IDisposable
     private HwndSource? _messageWindow;
     private readonly ConfigManager _configManager;
     private string _currentActiveDevice = string.Empty;
+    private IntPtr _lastForegroundWindow = IntPtr.Zero;
 
     public event Action<string, string>? OnActiveDeviceChanged;
 
@@ -101,15 +102,18 @@ public class DeviceMonitor : IDisposable
         // Notifica a UI em tempo real
         OnActiveDeviceChanged?.Invoke(deviceName, layoutHklHex ?? "Nenhum layout vinculado");
 
-        // Evita chamadas repetitivas redundantes caso o dispositivo não mudou (performance em digitação)
-        if (_currentActiveDevice == deviceName)
+        IntPtr fgWindow = NativeMethods.GetForegroundWindow();
+
+        // Evita chamadas repetitivas redundantes caso o dispositivo NÃO MUDOU e a JANELA ALVO também é a mesma
+        if (_currentActiveDevice == deviceName && _lastForegroundWindow == fgWindow)
             return;
 
         _currentActiveDevice = deviceName;
+        _lastForegroundWindow = fgWindow;
         
         if (!string.IsNullOrEmpty(layoutHklHex))
         {
-            ChangeForegroundLayout(layoutHklHex);
+            ChangeForegroundLayout(layoutHklHex, fgWindow);
         }
     }
 
@@ -136,14 +140,13 @@ public class DeviceMonitor : IDisposable
         return string.Empty;
     }
 
-    private void ChangeForegroundLayout(string hklHex)
+    private void ChangeForegroundLayout(string hklHex, IntPtr fgWindow)
     {
         try
         {
             uint handleValue = Convert.ToUInt32(hklHex, 16);
             IntPtr hkl = new IntPtr(unchecked((int)handleValue));
 
-            IntPtr fgWindow = NativeMethods.GetForegroundWindow();
             if (fgWindow != IntPtr.Zero)
             {
                 // Manda uma requisição para a thread da UI em foco trocar o layout de idioma 

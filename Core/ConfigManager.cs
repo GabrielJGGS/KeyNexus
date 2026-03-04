@@ -19,7 +19,14 @@ public class ConfigManager
 
     public void SetLayoutForDevice(string deviceName, string layoutHkl)
     {
-        _deviceLayouts[deviceName] = layoutHkl;
+        if (string.IsNullOrEmpty(layoutHkl))
+        {
+            _deviceLayouts.TryRemove(deviceName, out _);
+        }
+        else
+        {
+            _deviceLayouts[deviceName] = layoutHkl;
+        }
         SaveConfig();
     }
 
