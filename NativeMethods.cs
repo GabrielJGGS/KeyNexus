@@ -58,7 +58,7 @@ internal static class NativeMethods
     public const uint RID_INPUT = 0x10000003;
     public const uint RIDI_DEVICENAME = 0x20000007;
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
     public static extern uint GetRawInputDeviceInfo(IntPtr hDevice, uint uiCommand, IntPtr pData, ref uint pcbSize);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]

@@ -8,6 +8,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Text="Selecione um teclado conectado e desinegne o layout desejado:" 
@@ -31,7 +32,14 @@
             </ListView.View>
         </ListView>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+        <Border Grid.Row="2" Background="#FFF1F1F1" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="3" Padding="10" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="Preview em tempo real:" FontWeight="Bold" Margin="0,0,0,5"/>
+                <TextBlock x:Name="txtPreviewStatus" Text="Pressione tecla do outro teclado para testar a mudança de layout..." FontSize="13" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Atualizar Lista" Width="100" Margin="0,0,10,0" Click="BtnRefresh_Click"/>
             <Button Content="Fechar" Width="100" Click="BtnClose_Click"/>
         </StackPanel>

@@ -13,6 +13,8 @@ public class DeviceMonitor : IDisposable
     private readonly ConfigManager _configManager;
     private string _currentActiveDevice = string.Empty;
 
+    public event Action<string, string>? OnActiveDeviceChanged;
+
     public DeviceMonitor()
     {
         _configManager = new ConfigManager();
@@ -94,14 +96,17 @@ public class DeviceMonitor : IDisposable
     {
         string deviceName = GetDeviceName(hDevice);
         
+        string? layoutHklHex = _configManager.GetLayoutForDevice(deviceName);
+        
+        // Notifica a UI em tempo real
+        OnActiveDeviceChanged?.Invoke(deviceName, layoutHklHex ?? "Nenhum layout vinculado");
+
         // Evita chamadas repetitivas redundantes caso o dispositivo não mudou (performance em digitação)
         if (_currentActiveDevice == deviceName)
             return;
 
         _currentActiveDevice = deviceName;
         
-        // Verifica se há um layout preferido configurado para este dispositivo físico  
-        string? layoutHklHex = _configManager.GetLayoutForDevice(deviceName);
         if (!string.IsNullOrEmpty(layoutHklHex))
         {
             ChangeForegroundLayout(layoutHklHex);

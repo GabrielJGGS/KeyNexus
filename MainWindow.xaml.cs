@@ -21,6 +21,26 @@ public partial class MainWindow : Window
         LoadInstalledLayouts();
         lstKeyboards.ItemsSource = _keyboardItems;
         RefreshKeyboardsList();
+
+        var app = (App)System.Windows.Application.Current;
+        var deviceMonitor = (DeviceMonitor)app.GetType().GetField("deviceMonitor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(app)!;
+        deviceMonitor.OnActiveDeviceChanged += DeviceMonitor_OnActiveDeviceChanged;
+    }
+
+    private void DeviceMonitor_OnActiveDeviceChanged(string deviceName, string layout)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            txtPreviewStatus.Text = $"Teclado: {deviceName}\nLayout Alvo: {layout}";
+        });
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        var app = (App)System.Windows.Application.Current;
+        var deviceMonitor = (DeviceMonitor)app.GetType().GetField("deviceMonitor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(app)!;
+        deviceMonitor.OnActiveDeviceChanged -= DeviceMonitor_OnActiveDeviceChanged;
+        base.OnClosed(e);
     }
 
     private void LoadInstalledLayouts()
