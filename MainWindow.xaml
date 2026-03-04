@@ -1,0 +1,39 @@
+<Window x:Class="KeyNexus.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="KeyNexus Configurações" Height="400" Width="600"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Selecione um teclado conectado e desinegne o layout desejado:" 
+                   FontWeight="Bold" Margin="0,0,0,10"/>
+
+        <ListView x:Name="lstKeyboards" Grid.Row="1" Margin="0,0,0,10">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Teclado (Device ID)" Width="300" DisplayMemberBinding="{Binding DeviceName}"/>
+                    <GridViewColumn Header="Layout (Código HKL)" Width="250">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <ComboBox Width="200" ItemsSource="{Binding AvailableLayouts}" 
+                                          DisplayMemberPath="Name" SelectedValuePath="Hkl" 
+                                          SelectedValue="{Binding SelectedLayoutHkl, Mode=TwoWay}"
+                                          SelectionChanged="LayoutComboBox_SelectionChanged"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Atualizar Lista" Width="100" Margin="0,0,10,0" Click="BtnRefresh_Click"/>
+            <Button Content="Fechar" Width="100" Click="BtnClose_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
