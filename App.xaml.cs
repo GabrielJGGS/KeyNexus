@@ -1,6 +1,6 @@
-using System.Configuration;
-using System.Data;
+using System;
 using System.Windows;
+using KeyNexus.Core;
 using Forms = System.Windows.Forms;
 using System.Drawing;
 
@@ -10,40 +10,34 @@ public partial class App : System.Windows.Application
 {
     private Forms.NotifyIcon notifyIcon = null!;
     private MainWindow? mainWindow;
-    private Core.DeviceMonitor deviceMonitor = null!;
+
+    // ══════════════════════════════════════
+    // Propriedade pública (sem Reflection!)
+    // ══════════════════════════════════════
+    public DeviceMonitor Monitor { get; private set; } = null!;
 
     private void Application_Startup(object sender, StartupEventArgs e)
     {
-        // Impede que a MainWindow abra automaticamente (roda em background)
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Logger.Info("═══ KeyNexus iniciado ═══");
 
-        // Configura o ícone da bandeja
+        // Configura a bandeja do sistema
         notifyIcon = new Forms.NotifyIcon();
-        // Fallback icon - em produção seria ideal carregar um ícone real com notifyIcon.Icon = new Icon("icon.ico");
-        notifyIcon.Icon = SystemIcons.Information; 
+        notifyIcon.Icon = SystemIcons.Application;
         notifyIcon.Visible = true;
-        notifyIcon.Text = "KeyNexus - Gerenciador de Layouts";
-        
-        notifyIcon.DoubleClick += NotifyIcon_DoubleClick;
+        notifyIcon.Text = "KeyNexus — Gerenciador de Layouts";
 
-        // Context Menu
-        notifyIcon.ContextMenuStrip = new Forms.ContextMenuStrip();
-        notifyIcon.ContextMenuStrip.Items.Add("Configurações", null, OnSettingsClicked);
-        notifyIcon.ContextMenuStrip.Items.Add("Sair", null, OnExitClicked);
+        notifyIcon.DoubleClick += (_, _) => ShowMainWindow();
 
-        // Inicializar monitor de hardware
-        deviceMonitor = new Core.DeviceMonitor();
-        deviceMonitor.Start();
-    }
+        var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("⚙ Configurações", null, (_, _) => ShowMainWindow());
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("✕ Sair", null, (_, _) => Current.Shutdown());
+        notifyIcon.ContextMenuStrip = menu;
 
-    private void NotifyIcon_DoubleClick(object? sender, EventArgs e)
-    {
-        ShowMainWindow();
-    }
-
-    private void OnSettingsClicked(object? sender, EventArgs e)
-    {
-        ShowMainWindow();
+        // Inicializar DeviceMonitor
+        Monitor = new DeviceMonitor();
+        Monitor.Start();
     }
 
     private void ShowMainWindow()
@@ -51,7 +45,7 @@ public partial class App : System.Windows.Application
         if (mainWindow == null)
         {
             mainWindow = new MainWindow();
-            mainWindow.Closed += (s, args) => mainWindow = null;
+            mainWindow.Closed += (_, _) => mainWindow = null;
             mainWindow.Show();
         }
         else
@@ -62,14 +56,10 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private void OnExitClicked(object? sender, EventArgs e)
-    {
-        Current.Shutdown();
-    }
-
     private void Application_Exit(object sender, ExitEventArgs e)
     {
+        Logger.Info("═══ KeyNexus encerrado ═══");
         notifyIcon?.Dispose();
-        deviceMonitor?.Stop();
+        Monitor?.Stop();
     }
 }

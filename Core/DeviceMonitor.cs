@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows.Interop;
-using System.Windows;
 
 namespace KeyNexus.Core;
 
@@ -14,18 +12,27 @@ public class DeviceMonitor : IDisposable
     private string _currentActiveDevice = string.Empty;
     private IntPtr _lastForegroundWindow = IntPtr.Zero;
 
-    public event Action<string, string>? OnActiveDeviceChanged;
+    /// <summary>
+    /// Disparado quando o dispositivo ativo muda.
+    /// Parâmetros: (rawDevicePath, friendlyName, layoutHkl ou null)
+    /// </summary>
+    public event Action<string, string, string?>? OnActiveDeviceChanged;
+
+    /// <summary>
+    /// Disparado quando um dispositivo USB é conectado ou desconectado.
+    /// </summary>
+    public event Action? OnDevicesChanged;
+
+    public ConfigManager Config => _configManager;
 
     public DeviceMonitor()
     {
         _configManager = new ConfigManager();
+        Logger.Info("DeviceMonitor inicializado");
     }
-
-    public ConfigManager Config => _configManager;
 
     public void Start()
     {
-        // Cria uma "Message Only Window" para processamento no background
         var parameters = new HwndSourceParameters("KeyNexus_RawInputWindow")
         {
             WindowStyle = 0,
@@ -36,6 +43,7 @@ public class DeviceMonitor : IDisposable
         _messageWindow.AddHook(WndProc);
 
         RegisterRawInput(_messageWindow.Handle);
+        Logger.Info("Monitoramento de teclados iniciado");
     }
 
     public void Stop()
@@ -43,27 +51,40 @@ public class DeviceMonitor : IDisposable
         _messageWindow?.RemoveHook(WndProc);
         _messageWindow?.Dispose();
         _messageWindow = null;
+        Logger.Info("Monitoramento de teclados parado");
     }
 
     private void RegisterRawInput(IntPtr hwnd)
     {
         var devices = new NativeMethods.RAWINPUTDEVICE[1];
-        devices[0].usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
-        devices[0].usUsage = 0x06;     // HID_USAGE_GENERIC_KEYBOARD
-        devices[0].dwFlags = NativeMethods.RIDEV_INPUTSINK; 
+        devices[0].usUsagePage = 0x01;
+        devices[0].usUsage = 0x06;
+        devices[0].dwFlags = NativeMethods.RIDEV_INPUTSINK;
         devices[0].hwndTarget = hwnd;
 
-        if (!NativeMethods.RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICE))))
+        if (!NativeMethods.RegisterRawInputDevices(
+            devices, (uint)devices.Length,
+            (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICE))))
         {
-            System.Diagnostics.Debug.WriteLine("Falha ao registrar Raw Input.");
+            Logger.Error("Falha ao registrar Raw Input");
         }
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == NativeMethods.WM_INPUT)
+        switch (msg)
         {
-            ProcessRawInput(lParam);
+            case NativeMethods.WM_INPUT:
+                ProcessRawInput(lParam);
+                break;
+
+            case NativeMethods.WM_DEVICECHANGE:
+                if (wParam.ToInt32() == NativeMethods.DBT_DEVNODES_CHANGED)
+                {
+                    Logger.Info("Mudança de dispositivos detectada (hot-plug)");
+                    OnDevicesChanged?.Invoke();
+                }
+                break;
         }
         return IntPtr.Zero;
     }
@@ -71,14 +92,15 @@ public class DeviceMonitor : IDisposable
     private void ProcessRawInput(IntPtr hRawInput)
     {
         uint dwSize = 0;
-        NativeMethods.GetRawInputData(hRawInput, NativeMethods.RID_INPUT, IntPtr.Zero, ref dwSize, (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTHEADER)));
-        
+        uint headerSize = (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTHEADER));
+        NativeMethods.GetRawInputData(hRawInput, NativeMethods.RID_INPUT, IntPtr.Zero, ref dwSize, headerSize);
+
         if (dwSize == 0) return;
 
         IntPtr pData = Marshal.AllocHGlobal((int)dwSize);
         try
         {
-            if (NativeMethods.GetRawInputData(hRawInput, NativeMethods.RID_INPUT, pData, ref dwSize, (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTHEADER))) == dwSize)
+            if (NativeMethods.GetRawInputData(hRawInput, NativeMethods.RID_INPUT, pData, ref dwSize, headerSize) == dwSize)
             {
                 var header = Marshal.PtrToStructure<NativeMethods.RAWINPUTHEADER>(pData);
                 if (header.dwType == NativeMethods.RIM_TYPEKEYBOARD)
@@ -96,21 +118,20 @@ public class DeviceMonitor : IDisposable
     private void HandleKeyboardInput(IntPtr hDevice)
     {
         string deviceName = GetDeviceName(hDevice);
-        
+        string friendlyName = DeviceNameResolver.GetFriendlyName(deviceName);
         string? layoutHklHex = _configManager.GetLayoutForDevice(deviceName);
-        
-        // Notifica a UI em tempo real
-        OnActiveDeviceChanged?.Invoke(deviceName, layoutHklHex ?? "Nenhum layout vinculado");
+
+        // Notifica a UI em tempo real (assíncrono via BeginInvoke no subscriber)
+        OnActiveDeviceChanged?.Invoke(deviceName, friendlyName, layoutHklHex);
 
         IntPtr fgWindow = NativeMethods.GetForegroundWindow();
 
-        // Evita chamadas repetitivas redundantes caso o dispositivo NÃO MUDOU e a JANELA ALVO também é a mesma
         if (_currentActiveDevice == deviceName && _lastForegroundWindow == fgWindow)
             return;
 
         _currentActiveDevice = deviceName;
         _lastForegroundWindow = fgWindow;
-        
+
         if (!string.IsNullOrEmpty(layoutHklHex))
         {
             ChangeForegroundLayout(layoutHklHex, fgWindow);
@@ -121,7 +142,7 @@ public class DeviceMonitor : IDisposable
     {
         uint pcbSize = 0;
         NativeMethods.GetRawInputDeviceInfo(hDevice, NativeMethods.RIDI_DEVICENAME, IntPtr.Zero, ref pcbSize);
-        
+
         if (pcbSize == 0) return string.Empty;
 
         IntPtr pData = Marshal.AllocHGlobal((int)pcbSize * 2);
@@ -149,19 +170,19 @@ public class DeviceMonitor : IDisposable
 
             if (fgWindow != IntPtr.Zero)
             {
-                // Manda uma requisição para a thread da UI em foco trocar o layout de idioma 
                 NativeMethods.PostMessage(fgWindow, NativeMethods.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, hkl);
+                Logger.Info($"Layout alterado para {hklHex} na janela 0x{fgWindow:X}");
             }
         }
         catch (Exception ex)
         {
-             System.Diagnostics.Debug.WriteLine($"Error changing layout: {ex.Message}");
+            Logger.Error("Falha ao alterar layout", ex);
         }
     }
 
     public List<string> GetConnectedKeyboardsNames()
     {
-        List<string> keyboards = new List<string>();
+        List<string> keyboards = new();
         uint deviceCount = 0;
         uint dwSize = (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICELIST));
 
@@ -182,9 +203,7 @@ public class DeviceMonitor : IDisposable
                 {
                     string name = GetDeviceName(rid.hDevice);
                     if (!string.IsNullOrEmpty(name))
-                    {
                         keyboards.Add(name);
-                    }
                 }
             }
         }

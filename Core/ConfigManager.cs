@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
@@ -6,14 +7,16 @@ namespace KeyNexus.Core;
 
 public class ConfigManager
 {
-    private const string ConfigFile = "keynexus_config.json";
-    
-    // Key: DeviceName, Value: Layout HKL (string format ex: "00000416" for ABNT2)
+    private static readonly string ConfigDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KeyNexus");
+    private static readonly string ConfigFile = Path.Combine(ConfigDir, "keynexus_config.json");
+
     private ConcurrentDictionary<string, string> _deviceLayouts;
 
     public ConfigManager()
     {
         _deviceLayouts = new ConcurrentDictionary<string, string>();
+        Directory.CreateDirectory(ConfigDir);
         LoadConfig();
     }
 
@@ -22,27 +25,22 @@ public class ConfigManager
         if (string.IsNullOrEmpty(layoutHkl))
         {
             _deviceLayouts.TryRemove(deviceName, out _);
+            Logger.Info($"Layout desvinculado: {deviceName}");
         }
         else
         {
             _deviceLayouts[deviceName] = layoutHkl;
+            Logger.Info($"Layout vinculado: {deviceName} → {layoutHkl}");
         }
         SaveConfig();
     }
 
     public string? GetLayoutForDevice(string deviceName)
     {
-        if (_deviceLayouts.TryGetValue(deviceName, out var layoutHkl))
-        {
-            return layoutHkl;
-        }
-        return null;
+        return _deviceLayouts.TryGetValue(deviceName, out var hkl) ? hkl : null;
     }
 
-    public IReadOnlyDictionary<string, string> GetAllMappings()
-    {
-        return _deviceLayouts;
-    }
+    public IReadOnlyDictionary<string, string> GetAllMappings() => _deviceLayouts;
 
     private void LoadConfig()
     {
@@ -55,13 +53,13 @@ public class ConfigManager
                 if (dict != null)
                 {
                     _deviceLayouts = new ConcurrentDictionary<string, string>(dict);
+                    Logger.Info($"Configuração carregada: {_deviceLayouts.Count} mapeamentos");
                 }
             }
         }
         catch (Exception ex)
         {
-            // Log error in a real app
-            System.Diagnostics.Debug.WriteLine($"Failed to load config: {ex.Message}");
+            Logger.Error("Falha ao carregar configuração", ex);
         }
     }
 
@@ -69,12 +67,59 @@ public class ConfigManager
     {
         try
         {
-            var json = JsonSerializer.Serialize(_deviceLayouts, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(
+                _deviceLayouts,
+                new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ConfigFile, json);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to save config: {ex.Message}");
+            Logger.Error("Falha ao salvar configuração", ex);
+        }
+    }
+
+    // ══════════════════════════════════════
+    // Auto-start com Windows
+    // ══════════════════════════════════════
+    private const string RegistryRunKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+    private const string AppName = "KeyNexus";
+
+    public static bool IsAutoStartEnabled()
+    {
+        try
+        {
+            #pragma warning disable CA1416
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RegistryRunKey, false);
+            return key?.GetValue(AppName) != null;
+            #pragma warning restore CA1416
+        }
+        catch { return false; }
+    }
+
+    public static void SetAutoStart(bool enabled)
+    {
+        try
+        {
+            #pragma warning disable CA1416
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RegistryRunKey, true);
+            if (key == null) return;
+
+            if (enabled)
+            {
+                string exePath = Environment.ProcessPath ?? "";
+                key.SetValue(AppName, $"\"{exePath}\"");
+                Logger.Info("Auto-start habilitado");
+            }
+            else
+            {
+                key.DeleteValue(AppName, false);
+                Logger.Info("Auto-start desabilitado");
+            }
+            #pragma warning restore CA1416
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Falha ao configurar auto-start", ex);
         }
     }
 }
