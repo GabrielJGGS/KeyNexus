@@ -12,10 +12,14 @@ public class ConfigManager
     private static readonly string ConfigFile = Path.Combine(ConfigDir, "keynexus_config.json");
 
     private ConcurrentDictionary<string, string> _deviceLayouts;
+    private ConcurrentDictionary<string, string> _deviceAliases;
+    private ConcurrentDictionary<string, string> _layoutAliases;
 
     public ConfigManager()
     {
         _deviceLayouts = new ConcurrentDictionary<string, string>();
+        _deviceAliases = new ConcurrentDictionary<string, string>();
+        _layoutAliases = new ConcurrentDictionary<string, string>();
         Directory.CreateDirectory(ConfigDir);
         LoadConfig();
     }
@@ -42,6 +46,36 @@ public class ConfigManager
 
     public IReadOnlyDictionary<string, string> GetAllMappings() => _deviceLayouts;
 
+    // ══════════════════════════════════════
+    // Apelidos de Dispositivos
+    // ══════════════════════════════════════
+    public void SetDeviceAlias(string deviceName, string alias)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+            _deviceAliases.TryRemove(deviceName, out _);
+        else
+            _deviceAliases[deviceName] = alias;
+        SaveConfig();
+    }
+
+    public string? GetDeviceAlias(string deviceName)
+        => _deviceAliases.TryGetValue(deviceName, out var alias) ? alias : null;
+
+    // ══════════════════════════════════════
+    // Apelidos de Layouts
+    // ══════════════════════════════════════
+    public void SetLayoutAlias(string hkl, string alias)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+            _layoutAliases.TryRemove(hkl, out _);
+        else
+            _layoutAliases[hkl] = alias;
+        SaveConfig();
+    }
+
+    public string? GetLayoutAlias(string hkl)
+        => _layoutAliases.TryGetValue(hkl, out var alias) ? alias : null;
+
     private void LoadConfig()
     {
         try
@@ -49,11 +83,13 @@ public class ConfigManager
             if (File.Exists(ConfigFile))
             {
                 var json = File.ReadAllText(ConfigFile);
-                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                if (dict != null)
+                var root = JsonSerializer.Deserialize<ConfigData>(json);
+                if (root != null)
                 {
-                    _deviceLayouts = new ConcurrentDictionary<string, string>(dict);
-                    Logger.Info($"Configuração carregada: {_deviceLayouts.Count} mapeamentos");
+                    _deviceLayouts = new ConcurrentDictionary<string, string>(root.DeviceLayouts ?? new());
+                    _deviceAliases = new ConcurrentDictionary<string, string>(root.DeviceAliases ?? new());
+                    _layoutAliases = new ConcurrentDictionary<string, string>(root.LayoutAliases ?? new());
+                    Logger.Info($"Configuração carregada: {_deviceLayouts.Count} mapeamentos, {_deviceAliases.Count} apelidos");
                 }
             }
         }
@@ -67,15 +103,26 @@ public class ConfigManager
     {
         try
         {
-            var json = JsonSerializer.Serialize(
-                _deviceLayouts,
-                new JsonSerializerOptions { WriteIndented = true });
+            var data = new ConfigData
+            {
+                DeviceLayouts = new Dictionary<string, string>(_deviceLayouts),
+                DeviceAliases = new Dictionary<string, string>(_deviceAliases),
+                LayoutAliases = new Dictionary<string, string>(_layoutAliases)
+            };
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ConfigFile, json);
         }
         catch (Exception ex)
         {
             Logger.Error("Falha ao salvar configuração", ex);
         }
+    }
+
+    private class ConfigData
+    {
+        public Dictionary<string, string>? DeviceLayouts { get; set; }
+        public Dictionary<string, string>? DeviceAliases { get; set; }
+        public Dictionary<string, string>? LayoutAliases { get; set; }
     }
 
     // ══════════════════════════════════════
