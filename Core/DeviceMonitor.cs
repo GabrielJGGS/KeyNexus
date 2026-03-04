@@ -140,9 +140,8 @@ public class DeviceMonitor : IDisposable
     {
         try
         {
-            // O valor é geralmente guardado em hexa nas configs 
-            long handleValue = Convert.ToInt64(hklHex, 16);
-            IntPtr hkl = new IntPtr(handleValue);
+            uint handleValue = Convert.ToUInt32(hklHex, 16);
+            IntPtr hkl = new IntPtr(unchecked((int)handleValue));
 
             IntPtr fgWindow = NativeMethods.GetForegroundWindow();
             if (fgWindow != IntPtr.Zero)

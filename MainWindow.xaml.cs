@@ -52,17 +52,26 @@ public partial class MainWindow : Window
             IntPtr[] hkls = new IntPtr[count];
             NativeMethods.GetKeyboardLayoutList(count, hkls);
 
-            // Um buffer auxiliar pois o GetKeyboardLayoutName preenche os dados do layout ativo pro thread
-            StringBuilder layoutName = new StringBuilder(9); 
-
             foreach (var hkl in hkls)
             {
-                // Embora GetKeyboardLayoutName forneça o código de linguagem (ex: 00000416),
-                // para exibir de verdade "Português Brasileiro ABNT2", 
-                // precisaríamos acessar o Registry ou usar classes CultureInfo mais avançadas, 
-                // mas para simplicidade usaremos o HKL em Hexadecimal para associação direta.
-                string hexHkl = hkl.ToInt64().ToString("x8");
-                _availableLayouts.Add(new KeyboardLayoutItem { Hkl = hexHkl, Name = $"Layout HKL: {hexHkl.ToUpper()}" });
+                long hkl64 = hkl.ToInt64();
+                // Isola os 32 bits inferiores para evitar FFFFFFFF no começo
+                string hexHkl = (hkl64 & 0xFFFFFFFF).ToString("X8");
+                
+                string layoutName;
+                try 
+                {
+                    // O LCID está nos 16 bits mais baixos do HKL
+                    int lcid = (int)(hkl64 & 0xFFFF);
+                    var culture = System.Globalization.CultureInfo.GetCultureInfo(lcid);
+                    layoutName = $"{culture.NativeName} (HKL: {hexHkl})";
+                }
+                catch 
+                {
+                    layoutName = $"Layout HKL: {hexHkl}";
+                }
+
+                _availableLayouts.Add(new KeyboardLayoutItem { Hkl = hexHkl, Name = layoutName });
             }
         }
     }
