@@ -80,39 +80,15 @@ public static class DeviceNameResolver
 
                 while (NativeMethods.SetupDiEnumDeviceInterfaces(hDevInfo, IntPtr.Zero, ref guid, index, ref did))
                 {
-                    uint requiredSize = 0;
                     var devInfoData = new NativeMethods.SP_DEVINFO_DATA();
                     devInfoData.cbSize = (uint)Marshal.SizeOf(typeof(NativeMethods.SP_DEVINFO_DATA));
 
-                    // Primeiro: obter tamanho necessário
-                    NativeMethods.SetupDiGetDeviceInterfaceDetail(
-                        hDevInfo, ref did, IntPtr.Zero, 0, ref requiredSize, ref devInfoData);
-
-                    IntPtr detailBuf = Marshal.AllocHGlobal((int)requiredSize);
-                    try
+                    string? devicePath = SetupApiHelper.TryGetHidDevicePath(hDevInfo, ref did, ref devInfoData);
+                    if (!string.IsNullOrEmpty(devicePath) && PathsMatch(rawDevicePath, devicePath))
                     {
-                        // cbSize do SP_DEVICE_INTERFACE_DETAIL_DATA:
-                        // Em 64-bit = 8, em 32-bit = 5 (4 + 1 TCHAR)
-                        Marshal.WriteInt32(detailBuf, IntPtr.Size == 8 ? 8 : 4 + Marshal.SystemDefaultCharSize);
-
-                        if (NativeMethods.SetupDiGetDeviceInterfaceDetail(
-                            hDevInfo, ref did, detailBuf, requiredSize, ref requiredSize, ref devInfoData))
-                        {
-                            // O caminho do device começa em offset 4
-                            string devicePath = Marshal.PtrToStringAuto(detailBuf + 4) ?? "";
-
-                            // Compara usando apenas VID e PID
-                            if (PathsMatch(rawDevicePath, devicePath))
-                            {
-                                string desc = GetDeviceDescription(hDevInfo, ref devInfoData);
-                                if (!string.IsNullOrEmpty(desc))
-                                    return desc;
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        Marshal.FreeHGlobal(detailBuf);
+                        string desc = GetDeviceDescription(hDevInfo, ref devInfoData);
+                        if (!string.IsNullOrEmpty(desc))
+                            return desc;
                     }
 
                     index++;
