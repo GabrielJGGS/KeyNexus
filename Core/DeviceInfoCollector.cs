@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
 namespace KeyNexus.Core;
@@ -25,8 +24,6 @@ public class DeviceInfoReport
 
 public static class DeviceInfoCollector
 {
-    private static readonly Regex VidRegex = new(@"VID_([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex PidRegex = new(@"PID_([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex MiRegex = new(@"MI_([0-9A-F]{2})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex ColRegex = new(@"Col(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -39,15 +36,20 @@ public static class DeviceInfoCollector
     {
         var report = new DeviceInfoReport { DeviceTitle = displayName };
         var paths = rawPaths ?? Array.Empty<string>();
-        bool isAcpi = representativePath.Contains("ACPI", StringComparison.OrdinalIgnoreCase);
+
+        var extraIds = new List<string>(paths);
+        extraIds.AddRange(SetupApiHelper.GetHardwareIds(representativePath));
+        var identity = DeviceIdentityParser.Parse(representativePath, extraIds);
 
         var ident = new DeviceInfoSection { Title = "Identificação" };
         AddRow(ident, "Nome exibido", displayName);
         AddRow(ident, "Apelido no KeyNexus", config.GetDeviceAlias(groupKey) ?? "(nenhum)");
         AddRow(ident, "Chave de agrupamento", groupKey);
-        AddRow(ident, "VID", ExtractMatch(VidRegex, representativePath) ?? "—");
-        AddRow(ident, "PID", ExtractMatch(PidRegex, representativePath) ?? "—");
-        AddRow(ident, "Tipo", isAcpi ? "ACPI (integrado)" : "HID USB");
+        AddRow(ident, "VID", identity.VendorId ?? "—");
+        AddRow(ident, "PID", identity.ProductId ?? "—");
+        AddRow(ident, "Tipo", identity.BusLabel);
+        if (!string.IsNullOrEmpty(identity.BluetoothAddress))
+            AddRow(ident, "Endereço Bluetooth", DeviceIdentityParser.FormatBluetoothAddress(identity.BluetoothAddress));
         AddRow(ident, "Caminho principal", representativePath);
         report.Sections.Add(ident);
 
@@ -74,9 +76,8 @@ public static class DeviceInfoCollector
         SetupApiHelper.CollectProperties(representativePath, setup);
         report.Sections.Add(setup);
 
-        var rawInput = CollectRawInputInfo(paths);
-        if (rawInput.Rows.Count > 0)
-            report.Sections.Add(rawInput);
+        foreach (var hidSection in CollectHidSections(groupKey, paths))
+            report.Sections.Add(hidSection);
 
         var keynexus = new DeviceInfoSection { Title = "Configuração KeyNexus" };
         string? layout = config.GetLayoutForDevice(groupKey);
@@ -100,95 +101,57 @@ public static class DeviceInfoCollector
         return report;
     }
 
-    private static DeviceInfoSection CollectRawInputInfo(IReadOnlyList<string> rawPaths)
+    private static IEnumerable<DeviceInfoSection> CollectHidSections(string groupKey, IReadOnlyList<string> rawPaths)
     {
-        var section = new DeviceInfoSection { Title = "Raw Input" };
-
+        List<HidInterfaceSnapshot> snapshots;
         try
         {
-            var handles = GetRawInputHandles();
-
-            foreach (var path in rawPaths)
-            {
-                if (handles.TryGetValue(path, out IntPtr hDevice))
-                {
-                    AddRow(section, ShortPath(path), $"Handle 0x{hDevice.ToInt64():X}");
-                }
-                else
-                {
-                    AddRow(section, ShortPath(path), "Handle não encontrado na lista atual");
-                }
-            }
+            snapshots = HidDeviceInspector.InspectGroup(groupKey, rawPaths);
         }
         catch (Exception ex)
         {
-            AddRow(section, "Erro", ex.Message);
+            var error = new DeviceInfoSection { Title = "HID" };
+            AddRow(error, "Erro", ex.Message);
+            return new[] { error };
         }
 
-        return section;
-    }
-
-    private static Dictionary<string, IntPtr> GetRawInputHandles()
-    {
-        var map = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
-        uint count = 0;
-        uint dwSize = (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICELIST>();
-
-        if (NativeMethods.GetRawInputDeviceList(IntPtr.Zero, ref count, dwSize) != 0)
-            return map;
-
-        if (count == 0) return map;
-
-        IntPtr list = Marshal.AllocHGlobal((int)(dwSize * count));
-        try
+        if (snapshots.Count == 0)
         {
-            if (NativeMethods.GetRawInputDeviceList(list, ref count, dwSize) == unchecked((uint)-1))
-                return map;
-
-            for (int i = 0; i < count; i++)
-            {
-                IntPtr ptr = new IntPtr(list.ToInt64() + (i * dwSize));
-                var item = Marshal.PtrToStructure<NativeMethods.RAWINPUTDEVICELIST>(ptr);
-                if (item.dwType != NativeMethods.RIM_TYPEKEYBOARD)
-                    continue;
-
-                string? name = GetRawDeviceName(item.hDevice);
-                if (!string.IsNullOrEmpty(name))
-                    map[name] = item.hDevice;
-            }
+            var empty = new DeviceInfoSection { Title = "HID" };
+            AddRow(empty, "Status", "Nenhuma coleção HID encontrada no Raw Input");
+            return new[] { empty };
         }
-        finally
+
+        var sections = new List<DeviceInfoSection>();
+        var country = new DeviceInfoSection { Title = "Layout de fábrica" };
+        AddRow(country, "Código de país HID",
+            "Não exposto pelo Windows (kbdhid). O campo bCountryCode não chega ao Raw Input.");
+        AddRow(country, "Como ler",
+            "As pistas abaixo vêm do descritor de relatório (usages), não do layout do SO.");
+        sections.Add(country);
+
+        for (int i = 0; i < snapshots.Count; i++)
         {
-            Marshal.FreeHGlobal(list);
+            var snap = snapshots[i];
+            var section = new DeviceInfoSection { Title = $"Coleção HID {i + 1}" };
+            AddRow(section, "Tipo Raw Input", snap.RawTypeLabel);
+            AddRow(section, "Handle", snap.HandleText);
+            AddIfPresent(section, "Usage", snap.UsageLabel ?? "");
+            AddIfPresent(section, "Resumo do teclado", snap.KeyboardSummary ?? "");
+            AddIfPresent(section, "VID/PID HID", snap.HidVidPid ?? "");
+            AddIfPresent(section, "Tamanho dos relatórios", snap.ReportSizes ?? "");
+            AddIfPresent(section, "Feature reports", snap.FeatureHint ?? "");
+            AddRow(section, "Pista de layout", snap.LayoutHint);
+            AddIfPresent(section, "Usages notáveis", snap.NotableUsages ?? "");
+            AddIfPresent(section, "Produto", snap.Product ?? "");
+            AddIfPresent(section, "Fabricante HID", snap.Manufacturer ?? "");
+            AddIfPresent(section, "Serial", snap.Serial ?? "");
+            AddIfPresent(section, "Consulta direta", snap.DirectQuery ?? "");
+            AddRow(section, "Caminho", snap.Path);
+            sections.Add(section);
         }
-        return map;
-    }
 
-    private static string? GetRawDeviceName(IntPtr hDevice)
-    {
-        try
-        {
-            uint pcbSize = 0;
-            NativeMethods.GetRawInputDeviceInfo(hDevice, NativeMethods.RIDI_DEVICENAME, IntPtr.Zero, ref pcbSize);
-            if (pcbSize == 0 || pcbSize > 8192) return null;
-
-            // pcbSize vem em caracteres; aloca em bytes (Unicode = 2 bytes/char) + folga
-            IntPtr pData = Marshal.AllocHGlobal((int)pcbSize * 2);
-            try
-            {
-                uint result = NativeMethods.GetRawInputDeviceInfo(hDevice, NativeMethods.RIDI_DEVICENAME, pData, ref pcbSize);
-                if (result == unchecked((uint)-1) || result == 0) return null;
-                return Marshal.PtrToStringAuto(pData);
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(pData);
-            }
-        }
-        catch
-        {
-            return null;
-        }
+        return sections;
     }
 
     private static string? ExtractMatch(Regex regex, string path)
@@ -210,9 +173,6 @@ public static class DeviceInfoCollector
             : path[(secondHash + 1)..];
         return instance.TrimEnd('\\');
     }
-
-    private static string ShortPath(string path) =>
-        path.Length > 72 ? path[..69] + "..." : path;
 
     internal static void AddRow(DeviceInfoSection section, string label, string value) =>
         section.Rows.Add(new DeviceInfoRow { Label = label, Value = value });

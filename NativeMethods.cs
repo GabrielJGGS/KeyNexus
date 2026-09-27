@@ -14,6 +14,7 @@ internal static class NativeMethods
     public const int WM_DEVICECHANGE = 0x0219;
     public const int DBT_DEVNODES_CHANGED = 0x0007;
     public const int RIM_TYPEKEYBOARD = 1;
+    public const int RIM_TYPEHID = 2;
     public const int RIDEV_INPUTSINK = 0x00000100;
 
     // ══════════════════════════════════════
@@ -60,7 +61,9 @@ internal static class NativeMethods
         IntPtr hRawInput, uint uiCommand, IntPtr pData, ref uint pcbSize, uint cbSizeHeader);
 
     public const uint RID_INPUT = 0x10000003;
+    public const uint RIDI_PREPARSEDDATA = 0x20000005;
     public const uint RIDI_DEVICENAME = 0x20000007;
+    public const uint RIDI_DEVICEINFO = 0x2000000b;
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
     public static extern uint GetRawInputDeviceInfo(
@@ -125,8 +128,6 @@ internal static class NativeMethods
     public const uint SPDRP_LOCATION_INFORMATION = 0x0D;
     public const uint SPDRP_PHYSICAL_DEVICE_OBJECT_NAME = 0x0E;
 
-    public const uint RIDI_DEVICEINFO = 0x2000000b;
-
     [StructLayout(LayoutKind.Sequential)]
     public struct RID_DEVICE_INFO_KEYBOARD
     {
@@ -139,12 +140,73 @@ internal static class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct RID_DEVICE_INFO_HID
+    {
+        public uint dwVendorId;
+        public uint dwProductId;
+        public uint dwVersionNumber;
+        public ushort usUsagePage;
+        public ushort usUsage;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
     public struct RID_DEVICE_INFO
     {
-        public uint cbSize;
-        public uint dwType;
-        public RID_DEVICE_INFO_KEYBOARD keyboard;
+        [FieldOffset(0)] public uint cbSize;
+        [FieldOffset(4)] public uint dwType;
+        [FieldOffset(8)] public RID_DEVICE_INFO_KEYBOARD keyboard;
+        [FieldOffset(8)] public RID_DEVICE_INFO_HID hid;
     }
+
+    public const uint HIDP_STATUS_SUCCESS = 0x00110000;
+    public const int HidP_Input = 0;
+    public const int HIDP_BUTTON_CAPS_SIZE = 72;
+    public const uint FILE_SHARE_READ = 0x00000001;
+    public const uint FILE_SHARE_WRITE = 0x00000002;
+    public const uint OPEN_EXISTING = 3;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern IntPtr CreateFile(
+        string lpFileName, uint dwDesiredAccess, uint dwShareMode,
+        IntPtr lpSecurityAttributes, uint dwCreationDisposition,
+        uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct HIDD_ATTRIBUTES
+    {
+        public uint Size;
+        public ushort VendorID;
+        public ushort ProductID;
+        public ushort VersionNumber;
+    }
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_GetAttributes(IntPtr hidDeviceObject, ref HIDD_ATTRIBUTES attributes);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_GetProductString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_GetManufacturerString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_GetSerialNumberString(IntPtr hidDeviceObject, byte[] buffer, uint bufferLength);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_GetPreparsedData(IntPtr hidDeviceObject, out IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    public static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+    [DllImport("hid.dll")]
+    public static extern uint HidP_GetCaps(IntPtr preparsedData, IntPtr capabilities);
+
+    [DllImport("hid.dll")]
+    public static extern uint HidP_GetButtonCaps(
+        int reportType, IntPtr buttonCaps, ref ushort buttonCapsLength, IntPtr preparsedData);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct SP_DEVINFO_DATA

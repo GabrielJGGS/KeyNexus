@@ -37,26 +37,8 @@ public static class DeviceNameResolver
         if (string.IsNullOrEmpty(rawDevicePath))
             return "???";
 
-        // Padrão: \\?\HID#VID_XXXX&PID_XXXX
-        string upper = rawDevicePath.ToUpperInvariant();
-        int vidIdx = upper.IndexOf("VID_");
-        int pidIdx = upper.IndexOf("PID_");
-
-        if (vidIdx >= 0 && pidIdx >= 0)
-        {
-            string vid = upper.Substring(vidIdx + 4, Math.Min(4, upper.Length - vidIdx - 4));
-            string pid = upper.Substring(pidIdx + 4, Math.Min(4, upper.Length - pidIdx - 4));
-            // Limpa caracteres extras
-            vid = vid.Split('&')[0].Split('#')[0];
-            pid = pid.Split('&')[0].Split('#')[0];
-            return $"VID:{vid} PID:{pid}";
-        }
-
-        // Para dispositivos ACPI (teclado do notebook)
-        if (upper.Contains("ACPI"))
-            return "Teclado Integrado";
-
-        return rawDevicePath.Length > 30 ? rawDevicePath[..30] + "..." : rawDevicePath;
+        return DeviceIdentityParser.FormatShortId(
+            DeviceIdentityParser.Parse(rawDevicePath, SetupApiHelper.GetHardwareIds(rawDevicePath)));
     }
 
     private static string ResolveFriendlyName(string rawDevicePath)
@@ -111,25 +93,21 @@ public static class DeviceNameResolver
 
     private static bool PathsMatch(string rawPath, string setupPath)
     {
-        // Comparação simples: encontrar VID_XXXX&PID_XXXX em ambos
-        string rawUpper = rawPath.ToUpperInvariant();
-        string setupUpper = setupPath.ToUpperInvariant();
+        if (string.Equals(rawPath, setupPath, StringComparison.OrdinalIgnoreCase))
+            return true;
 
-        int rVid = rawUpper.IndexOf("VID_");
-        int sVid = setupUpper.IndexOf("VID_");
+        string rawKey = DeviceGrouping.GetGroupKey(rawPath);
+        string setupKey = DeviceGrouping.GetGroupKey(setupPath);
+        if (!string.IsNullOrEmpty(rawKey) && rawKey.Equals(setupKey, StringComparison.OrdinalIgnoreCase))
+            return true;
 
-        if (rVid < 0 || sVid < 0) return false;
-
-        // Extrai segmento VID_XXXX&PID_XXXX
-        string ExtractVidPid(string s, int start)
-        {
-            int end = s.IndexOf('#', start);
-            if (end < 0) end = s.IndexOf('\\', start);
-            if (end < 0) end = s.Length;
-            return s.Substring(start, end - start);
-        }
-
-        return ExtractVidPid(rawUpper, rVid) == ExtractVidPid(setupUpper, sVid);
+        var rawId = DeviceIdentityParser.Parse(rawPath);
+        var setupId = DeviceIdentityParser.Parse(setupPath);
+        return !string.IsNullOrEmpty(rawId.VendorId)
+            && rawId.VendorId == setupId.VendorId
+            && !string.IsNullOrEmpty(rawId.ProductId)
+            && rawId.ProductId == setupId.ProductId
+            && (rawId.BluetoothAddress == null || rawId.BluetoothAddress == setupId.BluetoothAddress);
     }
 
     private static string GetDeviceDescription(IntPtr hDevInfo, ref NativeMethods.SP_DEVINFO_DATA devInfoData)
@@ -162,9 +140,11 @@ public static class DeviceNameResolver
 
     private static string FallbackName(string rawDevicePath)
     {
-        string upper = rawDevicePath.ToUpperInvariant();
-        if (upper.Contains("ACPI"))
+        var identity = DeviceIdentityParser.Parse(rawDevicePath);
+        if (identity.BusType == KeyboardBusType.Acpi)
             return "Teclado Integrado (Notebook)";
-        return GetShortId(rawDevicePath);
+        if (identity.BusType is KeyboardBusType.BluetoothHid or KeyboardBusType.BluetoothLeHid)
+            return "Teclado Bluetooth";
+        return DeviceIdentityParser.FormatShortId(identity);
     }
 }

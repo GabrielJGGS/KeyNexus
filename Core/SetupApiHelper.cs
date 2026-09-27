@@ -88,6 +88,35 @@ internal static class SetupApiHelper
         }
     }
 
+    public static string[] GetHardwareIds(string rawPath)
+    {
+        try
+        {
+            string? enumKey = RawPathToEnumKey(rawPath);
+            if (enumKey == null)
+                return Array.Empty<string>();
+
+            #pragma warning disable CA1416
+            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Enum\{enumKey}", false);
+            if (key == null)
+                return Array.Empty<string>();
+
+            var val = key.GetValue("HardwareID");
+            if (val is string[] arr)
+                return arr;
+            if (val is string s && !string.IsNullOrWhiteSpace(s))
+                return new[] { s };
+            #pragma warning restore CA1416
+        }
+        catch
+        {
+            // Sem Hardware IDs: o parser ainda usa o caminho Raw Input.
+        }
+
+        return Array.Empty<string>();
+    }
+
     #pragma warning disable CA1416
     private static void AddString(DeviceInfoSection section, string label, RegistryKey key, string valueName)
     {

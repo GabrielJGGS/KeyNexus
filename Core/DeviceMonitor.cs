@@ -10,6 +10,7 @@ public class DeviceMonitor : IDisposable
     private HwndSource? _messageWindow;
     private readonly ConfigManager _configManager;
     private RemapEngine? _remapEngine;
+    private readonly HashSet<string> _keyboardGroupKeys = new(StringComparer.OrdinalIgnoreCase);
     private string _currentActiveDevice = string.Empty;
     private string _currentActiveGroupKey = string.Empty;
     private IntPtr _lastForegroundWindow = IntPtr.Zero;
@@ -43,6 +44,7 @@ public class DeviceMonitor : IDisposable
         _messageWindow.AddHook(WndProc);
 
         RegisterRawInput(_messageWindow.Handle);
+        GetConnectedKeyboardGroups();
 
         _remapEngine = new RemapEngine(_configManager, () => _currentActiveGroupKey);
         _remapEngine.Start();
@@ -64,17 +66,23 @@ public class DeviceMonitor : IDisposable
 
     private void RegisterRawInput(IntPtr hwnd)
     {
-        var devices = new NativeMethods.RAWINPUTDEVICE[1];
+        var devices = new NativeMethods.RAWINPUTDEVICE[2];
         devices[0].usUsagePage = 0x01;
         devices[0].usUsage = 0x06;
         devices[0].dwFlags = NativeMethods.RIDEV_INPUTSINK;
         devices[0].hwndTarget = hwnd;
 
-        if (!NativeMethods.RegisterRawInputDevices(
-            devices, (uint)devices.Length,
-            (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICE))))
+        devices[1].usUsagePage = 0x0C;
+        devices[1].usUsage = 0x01;
+        devices[1].dwFlags = NativeMethods.RIDEV_INPUTSINK;
+        devices[1].hwndTarget = hwnd;
+
+        uint structSize = (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICE));
+        if (!NativeMethods.RegisterRawInputDevices(devices, (uint)devices.Length, structSize))
         {
-            Logger.Error("Falha ao registrar Raw Input");
+            Logger.Error("Falha ao registrar Raw Input (teclado + consumer); tentando só teclado");
+            if (!NativeMethods.RegisterRawInputDevices(new[] { devices[0] }, 1, structSize))
+                Logger.Error("Falha ao registrar Raw Input");
         }
     }
 
@@ -112,7 +120,9 @@ public class DeviceMonitor : IDisposable
             {
                 var header = Marshal.PtrToStructure<NativeMethods.RAWINPUTHEADER>(pData);
                 if (header.dwType == NativeMethods.RIM_TYPEKEYBOARD)
-                    HandleKeyboardInput(header.hDevice);
+                    HandleKeyboardInput(header.hDevice, requireKnownGroup: false);
+                else if (header.dwType == NativeMethods.RIM_TYPEHID)
+                    HandleKeyboardInput(header.hDevice, requireKnownGroup: true);
             }
         }
         finally
@@ -121,13 +131,15 @@ public class DeviceMonitor : IDisposable
         }
     }
 
-    private void HandleKeyboardInput(IntPtr hDevice)
+    private void HandleKeyboardInput(IntPtr hDevice, bool requireKnownGroup)
     {
         string deviceName = GetDeviceName(hDevice);
         if (DeviceGrouping.ShouldIgnore(deviceName))
             return;
 
         string groupKey = DeviceGrouping.GetGroupKey(deviceName);
+        if (requireKnownGroup && !IsKnownKeyboardGroup(groupKey))
+            return;
         string friendlyName = DeviceNameResolver.GetFriendlyName(deviceName);
         string? alias = _configManager.GetDeviceAlias(groupKey);
         string displayName = !string.IsNullOrEmpty(alias) ? alias : friendlyName;
@@ -206,7 +218,8 @@ public class DeviceMonitor : IDisposable
 
     public List<KeyboardGroup> GetConnectedKeyboardGroups()
     {
-        var rawPaths = new List<string>();
+        var keyboardPaths = new List<string>();
+        var hidPaths = new List<string>();
         uint deviceCount = 0;
         uint dwSize = (uint)Marshal.SizeOf(typeof(NativeMethods.RAWINPUTDEVICELIST));
 
@@ -222,13 +235,17 @@ public class DeviceMonitor : IDisposable
             {
                 IntPtr currentPtr = new IntPtr(pRawInputDeviceList.ToInt64() + (i * dwSize));
                 var rid = Marshal.PtrToStructure<NativeMethods.RAWINPUTDEVICELIST>(currentPtr);
+                if (rid.dwType != NativeMethods.RIM_TYPEKEYBOARD && rid.dwType != NativeMethods.RIM_TYPEHID)
+                    continue;
+
+                string name = GetDeviceName(rid.hDevice);
+                if (string.IsNullOrEmpty(name) || DeviceGrouping.ShouldIgnore(name))
+                    continue;
 
                 if (rid.dwType == NativeMethods.RIM_TYPEKEYBOARD)
-                {
-                    string name = GetDeviceName(rid.hDevice);
-                    if (!string.IsNullOrEmpty(name))
-                        rawPaths.Add(name);
-                }
+                    keyboardPaths.Add(name);
+                else
+                    hidPaths.Add(name);
             }
         }
         finally
@@ -236,7 +253,43 @@ public class DeviceMonitor : IDisposable
             Marshal.FreeHGlobal(pRawInputDeviceList);
         }
 
-        return DeviceGrouping.GroupDevices(rawPaths);
+        var groups = DeviceGrouping.GroupDevices(keyboardPaths);
+        CacheKeyboardGroups(groups);
+
+        if (hidPaths.Count > 0 && groups.Count > 0)
+        {
+            var merged = new List<string>(keyboardPaths);
+            foreach (var hidPath in hidPaths)
+            {
+                string key = DeviceGrouping.GetGroupKey(hidPath);
+                if (_keyboardGroupKeys.Contains(key))
+                    merged.Add(hidPath);
+            }
+
+            if (merged.Count > keyboardPaths.Count)
+                groups = DeviceGrouping.GroupDevices(merged);
+        }
+
+        return groups;
+    }
+
+    private bool IsKnownKeyboardGroup(string groupKey)
+    {
+        if (string.IsNullOrEmpty(groupKey))
+            return false;
+
+        if (_keyboardGroupKeys.Contains(groupKey))
+            return true;
+
+        GetConnectedKeyboardGroups();
+        return _keyboardGroupKeys.Contains(groupKey);
+    }
+
+    private void CacheKeyboardGroups(List<KeyboardGroup> groups)
+    {
+        _keyboardGroupKeys.Clear();
+        foreach (var group in groups)
+            _keyboardGroupKeys.Add(group.GroupKey);
     }
 
     public void Dispose() => Stop();

@@ -17,7 +17,7 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
             <TextBlock x:Name="txtTitle" FontSize="18" FontWeight="SemiBold"
                        Foreground="{StaticResource TextPrimaryBrush}"/>
-            <TextBlock Text="Informações coletadas do sistema e do KeyNexus."
+            <TextBlock Text="Informações do Windows, Raw Input e descritor HID."
                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0"/>
         </StackPanel>
 
@@ -39,7 +39,7 @@
                                             <DataTemplate>
                                                 <Grid Margin="0,3">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="160"/>
+                                                        <ColumnDefinition Width="170"/>
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Text="{Binding Label}" FontSize="11.5"
