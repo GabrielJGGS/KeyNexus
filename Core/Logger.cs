@@ -1,46 +1,93 @@
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 
 namespace KeyNexus.Core;
 
+/// <summary>
+/// Log assíncrono: quem chama só enfileira; um escritor em segundo plano grava em disco.
+/// A thread de entrada nunca espera por E/S.
+/// </summary>
 public static class Logger
 {
+    private const long MaxLogBytes = 5 * 1024 * 1024;
+
     private static readonly string LogDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KeyNexus");
     private static readonly string LogFile = Path.Combine(LogDir, "keynexus.log");
-    private static readonly object _lock = new();
+
+    private static readonly Channel<string> Queue = Channel.CreateUnbounded<string>(
+        new UnboundedChannelOptions { SingleReader = true, AllowSynchronousContinuations = false });
+
+    private static readonly Task Writer;
 
     static Logger()
     {
         Directory.CreateDirectory(LogDir);
+        Writer = Task.Run(WriteLoopAsync);
     }
 
-    public static void Info(string message) => Write("INFO", message);
-    public static void Error(string message) => Write("ERROR", message);
-    public static void Error(string message, Exception ex) => Write("ERROR", $"{message}: {ex.Message}");
+    public static string LogDirectory => LogDir;
 
-    private static void Write(string level, string message)
+    public static void Info(string message) => Enqueue("INFO", message);
+    public static void Error(string message) => Enqueue("ERROR", message);
+    public static void Error(string message, Exception ex) => Enqueue("ERROR", $"{message}: {ex.Message}");
+
+    [Conditional("DEBUG")]
+    public static void Debug(string message) => Enqueue("DEBUG", message);
+
+    /// <summary>Espera o escritor terminar de gravar o que estiver na fila (ao sair).</summary>
+    public static void Flush(TimeSpan timeout)
     {
+        Queue.Writer.TryComplete();
         try
         {
-            lock (_lock)
-            {
-                string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {message}";
-                File.AppendAllText(LogFile, line + Environment.NewLine);
-
-                // Rotaciona o log se exceder 5MB
-                var fi = new FileInfo(LogFile);
-                if (fi.Exists && fi.Length > 5 * 1024 * 1024)
-                {
-                    string backup = LogFile + ".old";
-                    if (File.Exists(backup)) File.Delete(backup);
-                    File.Move(LogFile, backup);
-                }
-            }
+            Writer.Wait(timeout);
         }
         catch
         {
-            // Silencia erros de gravação de log
+            // Encerrando: nada a fazer se o log falhar.
         }
+    }
+
+    private static void Enqueue(string level, string message) =>
+        Queue.Writer.TryWrite($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level}] {message}");
+
+    private static async Task WriteLoopAsync()
+    {
+        var reader = Queue.Reader;
+        var batch = new StringBuilder();
+
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
+        {
+            batch.Clear();
+            while (reader.TryRead(out var line))
+                batch.AppendLine(line);
+
+            try
+            {
+                File.AppendAllText(LogFile, batch.ToString());
+                RotateIfNeeded();
+            }
+            catch
+            {
+                // Silencia erros de gravação de log
+            }
+        }
+    }
+
+    private static void RotateIfNeeded()
+    {
+        var info = new FileInfo(LogFile);
+        if (!info.Exists || info.Length <= MaxLogBytes)
+            return;
+
+        string backup = LogFile + ".old";
+        if (File.Exists(backup))
+            File.Delete(backup);
+        File.Move(LogFile, backup);
     }
 }

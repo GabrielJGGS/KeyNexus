@@ -7,10 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-    <Version>2.0.2</Version>
-    <AssemblyVersion>2.0.2.0</AssemblyVersion>
-    <FileVersion>2.0.2.0</FileVersion>
+    <Version>2.5.0</Version>
+    <AssemblyVersion>2.5.0.0</AssemblyVersion>
+    <FileVersion>2.5.0.0</FileVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -20,6 +21,28 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="KeyNexus.Tests\**" />
+    <Page Remove="KeyNexus.Tests\**" />
+    <None Remove="KeyNexus.Tests\**" />
+    <EmbeddedResource Remove="KeyNexus.Tests\**" />
+    <Compile Remove="official\**" />
+    <None Remove="official\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(OfficialBuild)' == 'true'">
+    <Compile Include="official\**\*.cs" />
+  </ItemGroup>
+
+  <Target Name="RequireOfficialSources" BeforeTargets="CoreCompile" Condition="'$(OfficialBuild)' == 'true'">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\official\UpdateService.cs')"
+           Text="Build oficial exige a pasta official\ com o cliente de atualização." />
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="KeyNexus.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\icon.ico">

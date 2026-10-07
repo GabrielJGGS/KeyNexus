@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using KeyNexus.Core.Profiles;
 
 namespace KeyNexus.Core;
 
@@ -12,11 +14,21 @@ public class ConfigManager
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KeyNexus");
     private static readonly string ConfigFile = Path.Combine(ConfigDir, "keynexus_config.json");
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    private const int CurrentSchemaVersion = 2;
+    private const int SaveDelayMs = 400;
 
     private ConcurrentDictionary<string, string> _deviceLayouts;
     private ConcurrentDictionary<string, string> _deviceAliases;
     private ConcurrentDictionary<string, string> _layoutAliases;
     private ConcurrentDictionary<string, List<RemapRule>> _deviceRemaps;
+    private bool _onboardingDismissed;
+
+    private ProfileSnapshot _snapshot = ProfileSnapshot.Empty;
+    private readonly object _saveLock = new();
+    private readonly System.Threading.Timer _saveTimer;
+    private bool _savePending;
 
     public ConfigManager()
     {
@@ -24,9 +36,24 @@ public class ConfigManager
         _deviceAliases = new ConcurrentDictionary<string, string>();
         _layoutAliases = new ConcurrentDictionary<string, string>();
         _deviceRemaps = new ConcurrentDictionary<string, List<RemapRule>>();
+        _saveTimer = new System.Threading.Timer(_ => SaveNow(), null, Timeout.Infinite, Timeout.Infinite);
+
         Directory.CreateDirectory(ConfigDir);
+        IsFirstRun = !File.Exists(ConfigFile);
         LoadConfig();
+        RebuildSnapshot();
     }
+
+    /// <summary>Não havia arquivo de configuração quando o app abriu.</summary>
+    public bool IsFirstRun { get; }
+
+    public bool ShouldShowOnboarding => !_onboardingDismissed && _deviceLayouts.IsEmpty;
+
+    /// <summary>Perfis compilados que o hook lê sem alocar.</summary>
+    internal ProfileSnapshot Snapshot => Volatile.Read(ref _snapshot);
+
+    /// <summary>Layouts ou regras mudaram e o snapshot foi republicado.</summary>
+    internal event Action? SnapshotChanged;
 
     private static string NormalizeKey(string deviceName)
         => DeviceGrouping.GetGroupKey(deviceName);
@@ -36,15 +63,20 @@ public class ConfigManager
         string key = NormalizeKey(deviceName);
         if (string.IsNullOrEmpty(layoutHkl))
         {
-            _deviceLayouts.TryRemove(key, out _);
+            if (!_deviceLayouts.TryRemove(key, out _))
+                return;
             Logger.Info($"Layout desvinculado: {key}");
         }
         else
         {
+            if (_deviceLayouts.TryGetValue(key, out var current)
+                && string.Equals(current, layoutHkl, StringComparison.OrdinalIgnoreCase))
+                return;
             _deviceLayouts[key] = layoutHkl;
             Logger.Info($"Layout vinculado: {key} → {layoutHkl}");
         }
-        SaveConfig();
+        RebuildSnapshot();
+        ScheduleSave();
     }
 
     public string? GetLayoutForDevice(string deviceName)
@@ -69,8 +101,8 @@ public class ConfigManager
         if (string.IsNullOrWhiteSpace(alias))
             _deviceAliases.TryRemove(key, out _);
         else
-            _deviceAliases[key] = alias;
-        SaveConfig();
+            _deviceAliases[key] = alias.Trim();
+        ScheduleSave();
     }
 
     public string? GetDeviceAlias(string deviceName)
@@ -88,15 +120,20 @@ public class ConfigManager
 
     public void SetLayoutAlias(string hkl, string alias)
     {
+        if (string.IsNullOrEmpty(hkl))
+            return;
+
         if (string.IsNullOrWhiteSpace(alias))
             _layoutAliases.TryRemove(hkl, out _);
         else
-            _layoutAliases[hkl] = alias;
-        SaveConfig();
+            _layoutAliases[hkl] = alias.Trim();
+        ScheduleSave();
     }
 
     public string? GetLayoutAlias(string hkl)
-        => _layoutAliases.TryGetValue(hkl, out var alias) ? alias : null;
+        => !string.IsNullOrEmpty(hkl) && _layoutAliases.TryGetValue(hkl, out var alias) ? alias : null;
+
+    public IReadOnlyDictionary<string, string> GetAllLayoutAliases() => _layoutAliases;
 
     public List<RemapRule> GetRemapRules(string deviceName)
     {
@@ -118,10 +155,74 @@ public class ConfigManager
             _deviceRemaps.TryRemove(key, out _);
         else
             _deviceRemaps[key] = rules;
-        SaveConfig();
+        RebuildSnapshot();
+        ScheduleSave();
     }
 
     public int GetRemapRuleCount(string deviceName) => GetRemapRules(deviceName).Count;
+
+    /// <summary>Teclados com alguma configuração salva, conectados ou não.</summary>
+    public IReadOnlyCollection<string> GetConfiguredGroupKeys()
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        keys.UnionWith(_deviceLayouts.Keys);
+        keys.UnionWith(_deviceAliases.Keys);
+        keys.UnionWith(_deviceRemaps.Keys);
+        return keys;
+    }
+
+    /// <summary>Esquece apelido, layout e regras de um teclado.</summary>
+    public void RemoveDevice(string groupKey)
+    {
+        string key = NormalizeKey(groupKey);
+        bool changed = _deviceLayouts.TryRemove(key, out _);
+        changed |= _deviceAliases.TryRemove(key, out _);
+        changed |= _deviceRemaps.TryRemove(key, out _);
+        if (!changed)
+            return;
+
+        Logger.Info($"Configuração do teclado removida: {key}");
+        RebuildSnapshot();
+        ScheduleSave();
+    }
+
+    public void DismissOnboarding()
+    {
+        if (_onboardingDismissed)
+            return;
+        _onboardingDismissed = true;
+        ScheduleSave();
+    }
+
+    /// <summary>Grava agora o que estiver pendente (chamado ao sair).</summary>
+    public void Flush()
+    {
+        bool pending;
+        lock (_saveLock)
+        {
+            pending = _savePending;
+            _saveTimer.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+
+        if (pending)
+            SaveNow();
+    }
+
+    private void RebuildSnapshot()
+    {
+        try
+        {
+            var snapshot = ProfileCompiler.Compile(_deviceLayouts, _deviceRemaps);
+            Volatile.Write(ref _snapshot, snapshot);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Falha ao compilar perfis de teclado", ex);
+            return;
+        }
+
+        SnapshotChanged?.Invoke();
+    }
 
     private void LoadConfig()
     {
@@ -139,8 +240,14 @@ public class ConfigManager
             _deviceAliases = new ConcurrentDictionary<string, string>(root.DeviceAliases ?? new());
             _layoutAliases = new ConcurrentDictionary<string, string>(root.LayoutAliases ?? new());
             _deviceRemaps = new ConcurrentDictionary<string, List<RemapRule>>(root.DeviceRemaps ?? new());
+            _onboardingDismissed = root.OnboardingDismissed;
 
-            MigrateLegacyKeys();
+            bool changed = MigrateLegacyKeys();
+            if (root.SchemaVersion < CurrentSchemaVersion)
+                changed = true;
+            if (changed)
+                ScheduleSave();
+
             Logger.Info($"Configuração carregada: {_deviceLayouts.Count} layouts, {_deviceAliases.Count} apelidos, {_deviceRemaps.Count} remaps");
         }
         catch (Exception ex)
@@ -149,7 +256,7 @@ public class ConfigManager
         }
     }
 
-    private void MigrateLegacyKeys()
+    private bool MigrateLegacyKeys()
     {
         bool changed = false;
 
@@ -168,8 +275,7 @@ public class ConfigManager
             changed = true;
         }
 
-        if (changed)
-            SaveConfig();
+        return changed;
     }
 
     private static bool MigrateDictionary(ConcurrentDictionary<string, string> dict)
@@ -189,29 +295,48 @@ public class ConfigManager
         return changed;
     }
 
-    private void SaveConfig()
+    private void ScheduleSave()
     {
-        try
+        lock (_saveLock)
         {
-            var data = new ConfigData
-            {
-                DeviceLayouts = new Dictionary<string, string>(_deviceLayouts),
-                DeviceAliases = new Dictionary<string, string>(_deviceAliases),
-                LayoutAliases = new Dictionary<string, string>(_layoutAliases),
-                DeviceRemaps = new Dictionary<string, List<RemapRule>>(
-                    _deviceRemaps.ToDictionary(k => k.Key, v => v.Value))
-            };
-            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ConfigFile, json);
+            _savePending = true;
+            _saveTimer.Change(SaveDelayMs, Timeout.Infinite);
         }
-        catch (Exception ex)
+    }
+
+    private void SaveNow()
+    {
+        lock (_saveLock)
         {
-            Logger.Error("Falha ao salvar configuração", ex);
+            _savePending = false;
+            try
+            {
+                var data = new ConfigData
+                {
+                    SchemaVersion = CurrentSchemaVersion,
+                    OnboardingDismissed = _onboardingDismissed,
+                    DeviceLayouts = new Dictionary<string, string>(_deviceLayouts),
+                    DeviceAliases = new Dictionary<string, string>(_deviceAliases),
+                    LayoutAliases = new Dictionary<string, string>(_layoutAliases),
+                    DeviceRemaps = _deviceRemaps.ToDictionary(k => k.Key, v => v.Value)
+                };
+
+                string json = JsonSerializer.Serialize(data, JsonOptions);
+                string temp = ConfigFile + ".tmp";
+                File.WriteAllText(temp, json);
+                File.Move(temp, ConfigFile, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Falha ao salvar configuração", ex);
+            }
         }
     }
 
     private class ConfigData
     {
+        public int SchemaVersion { get; set; }
+        public bool OnboardingDismissed { get; set; }
         public Dictionary<string, string>? DeviceLayouts { get; set; }
         public Dictionary<string, string>? DeviceAliases { get; set; }
         public Dictionary<string, string>? LayoutAliases { get; set; }

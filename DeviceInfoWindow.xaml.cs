@@ -1,40 +1,42 @@
 using System;
+using System.Threading.Tasks;
 using System.Windows;
 using KeyNexus.Core;
+using KeyNexus.Themes;
+using KeyNexus.ViewModels;
 using MessageBox = System.Windows.MessageBox;
 
 namespace KeyNexus;
 
 public partial class DeviceInfoWindow : Window
 {
-    private readonly KeyboardItem _item;
+    private readonly KeyboardItemViewModel _item;
     private readonly ConfigManager _config;
 
-    public DeviceInfoWindow(KeyboardItem item, ConfigManager config)
+    public DeviceInfoWindow(KeyboardItemViewModel item, ConfigManager config)
     {
         _item = item;
         _config = config;
 
         InitializeComponent();
+        WindowEffects.Apply(this, useMica: false);
 
-        string title = item.Alias is "Sem apelido" or "" ? item.DisplayName : item.Alias;
-        txtTitle.Text = title;
-
+        txtTitle.Text = item.DisplayName;
         Loaded += DeviceInfoWindow_Loaded;
     }
 
-    private void DeviceInfoWindow_Loaded(object sender, RoutedEventArgs e)
+    private async void DeviceInfoWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= DeviceInfoWindow_Loaded;
 
         try
         {
-            var report = DeviceInfoCollector.Collect(
+            var report = await Task.Run(() => DeviceInfoCollector.Collect(
                 _item.GroupKey,
                 _item.DisplayName,
                 _item.RawDevicePath,
                 _item.RawPaths,
-                _config);
+                _config));
 
             lstSections.ItemsSource = report.Sections;
         }

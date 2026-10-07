@@ -43,6 +43,7 @@ public static class DeviceInfoCollector
 
         var ident = new DeviceInfoSection { Title = "Identificação" };
         AddRow(ident, "Nome exibido", displayName);
+        AddRow(ident, "Nome no Windows", DeviceNameResolver.GetFriendlyName(representativePath));
         AddRow(ident, "Apelido no KeyNexus", config.GetDeviceAlias(groupKey) ?? "(nenhum)");
         AddRow(ident, "Chave de agrupamento", groupKey);
         AddRow(ident, "VID", identity.VendorId ?? "—");
@@ -81,7 +82,17 @@ public static class DeviceInfoCollector
 
         var keynexus = new DeviceInfoSection { Title = "Configuração KeyNexus" };
         string? layout = config.GetLayoutForDevice(groupKey);
-        AddRow(keynexus, "Layout vinculado", string.IsNullOrEmpty(layout) ? "(nenhum)" : layout);
+        if (string.IsNullOrEmpty(layout))
+        {
+            AddRow(keynexus, "Layout vinculado", "(nenhum)");
+        }
+        else
+        {
+            var info = KeyboardLayoutCatalog.Describe(layout);
+            AddRow(keynexus, "Layout vinculado", $"{info.LayoutName} · {info.LanguageName}");
+            AddRow(keynexus, "  └ Identificadores", info.TechnicalInfo);
+            AddIfPresent(keynexus, "  └ Apelido", config.GetLayoutAlias(layout) ?? "");
+        }
         var rules = config.GetRemapRules(groupKey);
         AddRow(keynexus, "Regras de mapeamento", rules.Count.ToString());
         foreach (var rule in rules)
@@ -89,7 +100,7 @@ public static class DeviceInfoCollector
             string trigger = VkHelper.FormatTrigger(rule.TriggerVk, rule.Modifiers);
             string output = rule.OutputType switch
             {
-                RemapOutputType.Key => VkHelper.GetKeyName(rule.OutputVk),
+                RemapOutputType.Key => VkHelper.FormatTrigger(rule.OutputVk, rule.OutputModifiers) + " (tecla)",
                 RemapOutputType.Text => $"\"{rule.OutputText}\"",
                 RemapOutputType.Sequence => $"{rule.Sequence.Count} passo(s)",
                 _ => "?"

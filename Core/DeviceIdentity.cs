@@ -10,7 +10,9 @@ public enum KeyboardBusType
     Acpi,
     UsbHid,
     BluetoothHid,
-    BluetoothLeHid
+    BluetoothLeHid,
+    /// <summary>Teclado criado por software (drivers de controle, macro, acesso remoto).</summary>
+    Virtual
 }
 
 public sealed class DeviceIdentity
@@ -116,6 +118,12 @@ public static class DeviceIdentityParser
         if (upper.Contains(BluetoothHidProfileUuid) || upper.Contains("BTHENUM"))
             return KeyboardBusType.BluetoothHid;
 
+        if (upper.Contains("VID_") || upper.Contains("USB"))
+            return KeyboardBusType.UsbHid;
+
+        if (upper.Contains(@"\ROOT#") || upper.Contains("HID#HID&") || upper.Contains("VIRTUAL"))
+            return KeyboardBusType.Virtual;
+
         if (upper.Contains("HID"))
             return KeyboardBusType.UsbHid;
 
@@ -128,6 +136,7 @@ public static class DeviceIdentityParser
         KeyboardBusType.BluetoothLeHid => "HID Bluetooth (LE)",
         KeyboardBusType.BluetoothHid => "HID Bluetooth",
         KeyboardBusType.UsbHid => "HID USB",
+        KeyboardBusType.Virtual => "Virtual (software)",
         _ => "Desconhecido"
     };
 

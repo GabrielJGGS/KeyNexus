@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Interop;
+using KeyNexus.Core.Profiles;
 
 namespace KeyNexus.Core;
 
@@ -12,6 +14,9 @@ namespace KeyNexus.Core;
 /// </summary>
 public static class LayoutKeyHelper
 {
+    /// <summary>ToUnicodeEx sem alterar o estado do teclado (não "consome" tecla morta). Windows 10 1607+.</summary>
+    private const uint ToUnicodeDoNotChangeState = 0x4;
+
     private static readonly int[] KnownVks =
     {
         0x08, 0x09, 0x0D, 0x1B, 0x20, 0x21, 0x22, 0x23, 0x24,
@@ -34,6 +39,9 @@ public static class LayoutKeyHelper
         ModifierFlags.Shift,
         ModifierFlags.AltGr,
     };
+
+    private static readonly ConcurrentDictionary<IntPtr, IReadOnlyList<KeyOption>> KeysByLayout = new();
+    private static readonly ConcurrentDictionary<IntPtr, Dictionary<string, KeyOption>> LabelsByLayout = new();
 
     public static IntPtr ParseHkl(string? hklHex)
     {
@@ -72,23 +80,8 @@ public static class LayoutKeyHelper
             if (helper.Handle == IntPtr.Zero)
                 return;
 
-            uint targetThreadId = NativeMethods.GetWindowThreadProcessId(helper.Handle, out _);
-            uint currentThreadId = NativeMethods.GetCurrentThreadId();
-
-            bool attached = false;
-            try
-            {
-                if (targetThreadId != currentThreadId)
-                    attached = NativeMethods.AttachThreadInput(currentThreadId, targetThreadId, true);
-
-                NativeMethods.ActivateKeyboardLayout(hkl, NativeMethods.KLF_SETFORPROCESS);
-                NativeMethods.PostMessage(helper.Handle, NativeMethods.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, hkl);
-            }
-            finally
-            {
-                if (attached)
-                    NativeMethods.AttachThreadInput(currentThreadId, targetThreadId, false);
-            }
+            NativeMethods.ActivateKeyboardLayout(hkl, NativeMethods.KLF_SETFORPROCESS);
+            NativeMethods.PostMessage(helper.Handle, NativeMethods.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, hkl);
         }
         catch (Exception ex)
         {
@@ -96,31 +89,8 @@ public static class LayoutKeyHelper
         }
     }
 
-    public static int VkFromScanCode(uint scanCode, bool extended, string? layoutHklHex)
-    {
-        if (scanCode == 0)
-            return 0;
-
-        IntPtr hkl = ResolveHkl(layoutHklHex);
-
-        if (extended)
-        {
-            uint vk = NativeMethods.MapVirtualKeyEx(scanCode | 0xE000, NativeMethods.MAPVK_VSC_TO_VK, hkl);
-            if (vk != 0) return (int)vk;
-        }
-
-        uint vkNormal = NativeMethods.MapVirtualKeyEx(scanCode, NativeMethods.MAPVK_VSC_TO_VK, hkl);
-        if (vkNormal != 0)
-            return (int)vkNormal;
-
-        if (!extended)
-        {
-            uint vkExt = NativeMethods.MapVirtualKeyEx(scanCode | 0xE000, NativeMethods.MAPVK_VSC_TO_VK, hkl);
-            if (vkExt != 0) return (int)vkExt;
-        }
-
-        return 0;
-    }
+    public static int VkFromScanCode(uint scanCode, bool extended, string? layoutHklHex) =>
+        ScanCodeTable.Lookup(ScanCodeTable.For(ResolveHkl(layoutHklHex)), scanCode, extended);
 
     /// <summary>
     /// Com AltGr pressionado o Windows reporta VK errado; usa scan code físico da tecla.
@@ -140,18 +110,6 @@ public static class LayoutKeyHelper
 
     private static bool IsLikelyAltGrGhostVk(int vk) =>
         vk is >= 0x60 and <= 0x6F; // numpad
-
-    public static int ReadModifiersFromCheckboxes(bool ctrl, bool shift, bool alt)
-    {
-        if (ctrl && alt)
-            return ModifierFlags.AltGr | (shift ? ModifierFlags.Shift : 0);
-
-        int mods = 0;
-        if (ctrl) mods |= ModifierFlags.Ctrl;
-        if (shift) mods |= ModifierFlags.Shift;
-        if (alt) mods |= ModifierFlags.Alt;
-        return mods;
-    }
 
     public static string GetKeyName(int vk, string? layoutHklHex, int modifiers = 0)
     {
@@ -186,9 +144,63 @@ public static class LayoutKeyHelper
         return string.IsNullOrEmpty(modStr) ? display : $"{modStr}+{baseLabel}";
     }
 
-    public static IReadOnlyList<KeyOption> GetAllKeys(string? layoutHklHex)
+    /// <summary>Partes para desenhar como teclas: modificadores + tecla física (ex.: AltGr, .).</summary>
+    public static IReadOnlyList<string> GetTriggerParts(int vk, int modifiers, string? layoutHklHex)
     {
-        IntPtr hkl = ResolveHkl(layoutHklHex);
+        var parts = new List<string>(ModifierFlags.ToParts(modifiers));
+        parts.Add(BaseLabel(vk, ResolveHkl(layoutHklHex)));
+        return parts;
+    }
+
+    /// <summary>
+    /// Partes da saída: quando Shift/AltGr só servem para gerar um caractere, mostra o caractere (ex.: ?).
+    /// </summary>
+    public static IReadOnlyList<string> GetOutputParts(int vk, int modifiers, string? layoutHklHex)
+    {
+        modifiers = ModifierFlags.Normalize(modifiers);
+        bool charModifiers = modifiers is ModifierFlags.Shift or ModifierFlags.AltGr
+            or (ModifierFlags.Shift | ModifierFlags.AltGr);
+
+        if (charModifiers && !IsLayoutInvariantKey(vk)
+            && TryGetLayoutLabel(vk, modifiers, ResolveHkl(layoutHklHex)) is { Length: 1 } character)
+            return new[] { character };
+
+        return GetTriggerParts(vk, modifiers, layoutHklHex);
+    }
+
+    /// <summary>Acha a tecla (e os modificadores) que gera o caractere no layout.</summary>
+    public static bool TryFindKeyForCharacter(char character, string? layoutHklHex, out int vk, out int modifiers)
+    {
+        vk = 0;
+        modifiers = 0;
+
+        short result = NativeMethods.VkKeyScanEx(character, ResolveHkl(layoutHklHex));
+        if (result == -1)
+            return false;
+
+        vk = result & 0xFF;
+        int shiftState = (result >> 8) & 0xFF;
+        if ((shiftState & 0x38) != 0)
+            return false;
+
+        if ((shiftState & 0x6) == 0x6)
+            modifiers |= ModifierFlags.AltGr;
+        else
+        {
+            if ((shiftState & 0x2) != 0) modifiers |= ModifierFlags.Ctrl;
+            if ((shiftState & 0x4) != 0) modifiers |= ModifierFlags.Alt;
+        }
+        if ((shiftState & 0x1) != 0)
+            modifiers |= ModifierFlags.Shift;
+
+        return vk != 0;
+    }
+
+    public static IReadOnlyList<KeyOption> GetAllKeys(string? layoutHklHex) =>
+        KeysByLayout.GetOrAdd(ResolveHkl(layoutHklHex), BuildAllKeys);
+
+    private static IReadOnlyList<KeyOption> BuildAllKeys(IntPtr hkl)
+    {
         var options = new List<KeyOption>();
         var usedLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -263,6 +275,11 @@ public static class LayoutKeyHelper
         };
     }
 
+    private static string BaseLabel(int vk, IntPtr hkl) =>
+        IsLayoutInvariantKey(vk)
+            ? VkHelper.GetKeyName(vk)
+            : TryGetLayoutLabel(vk, 0, hkl) ?? VkHelper.GetKeyName(vk);
+
     private static int CategoryOrder(int vk)
     {
         if (vk >= 0x41 && vk <= 0x5A) return 0;
@@ -286,6 +303,12 @@ public static class LayoutKeyHelper
         keyState[NativeMethods.VK_SHIFT] = 0;
         keyState[NativeMethods.VK_CONTROL] = 0;
         keyState[NativeMethods.VK_MENU] = 0;
+        keyState[NativeMethods.VK_LSHIFT] = 0;
+        keyState[NativeMethods.VK_RSHIFT] = 0;
+        keyState[NativeMethods.VK_LCONTROL] = 0;
+        keyState[NativeMethods.VK_RCONTROL] = 0;
+        keyState[NativeMethods.VK_LMENU] = 0;
+        keyState[NativeMethods.VK_RMENU] = 0;
 
         if ((modifiers & ModifierFlags.Shift) != 0)
             keyState[NativeMethods.VK_SHIFT] = 0x80;
@@ -308,21 +331,11 @@ public static class LayoutKeyHelper
             return null;
 
         var buffer = new StringBuilder(8);
-        int result = NativeMethods.ToUnicodeEx((uint)vk, scan, keyState, buffer, buffer.Capacity, 0, hkl);
-        if (result == 1)
-        {
-            char c = buffer[0];
-            if (!char.IsControl(c))
-                return FormatCharLabel(c);
-        }
+        int result = NativeMethods.ToUnicodeEx((uint)vk, scan, keyState, buffer, buffer.Capacity, ToUnicodeDoNotChangeState, hkl);
 
-        if (result < 0)
-        {
-            buffer.Clear();
-            NativeMethods.ToUnicodeEx((uint)vk, scan, keyState, buffer, buffer.Capacity, 0, hkl);
-            if (buffer.Length > 0 && !char.IsControl(buffer[0]))
-                return FormatCharLabel(buffer[0]);
-        }
+        // result < 0: tecla morta (´ ~ ^); com a flag 0x4 o caractere vem no buffer sem ficar pendente.
+        if ((result == 1 || result < 0) && buffer.Length > 0 && !char.IsControl(buffer[0]))
+            return FormatCharLabel(buffer[0]);
 
         return null;
     }
@@ -335,18 +348,20 @@ public static class LayoutKeyHelper
         if (string.IsNullOrWhiteSpace(label))
             return null;
 
-        string trimmed = label.Trim();
+        IntPtr hkl = ResolveHkl(layoutHklHex);
+        var index = LabelsByLayout.GetOrAdd(hkl, _ => BuildLabelIndex(layoutHklHex));
+        return index.TryGetValue(label.Trim(), out var key) ? key : null;
+    }
+
+    private static Dictionary<string, KeyOption> BuildLabelIndex(string? layoutHklHex)
+    {
+        var index = new Dictionary<string, KeyOption>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in GetAllKeys(layoutHklHex))
         {
-            if (string.Equals(key.Name, trimmed, StringComparison.OrdinalIgnoreCase))
-                return key;
-
-            string charLabel = GetKeyName(key.Vk, layoutHklHex, key.Modifiers);
-            if (string.Equals(charLabel, trimmed, StringComparison.OrdinalIgnoreCase))
-                return key;
+            index.TryAdd(key.Name, key);
+            index.TryAdd(GetKeyName(key.Vk, layoutHklHex, key.Modifiers), key);
         }
-
-        return null;
+        return index;
     }
 
     public static KeyOption? FindByVk(int vk, int modifiers, string? layoutHklHex)

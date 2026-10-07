@@ -88,6 +88,27 @@ internal static class SetupApiHelper
         }
     }
 
+    /// <summary>ContainerID do dispositivo (todas as coleções e o nó Bluetooth/USB do aparelho compartilham).</summary>
+    public static string? GetContainerId(string rawPath)
+    {
+        try
+        {
+            string? enumKey = RawPathToEnumKey(rawPath);
+            if (enumKey == null)
+                return null;
+
+            #pragma warning disable CA1416
+            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Enum\{enumKey}", false);
+            return key?.GetValue("ContainerID") as string;
+            #pragma warning restore CA1416
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static string[] GetHardwareIds(string rawPath)
     {
         try
@@ -171,7 +192,7 @@ internal static class SetupApiHelper
     /// Ex.: \\?\HID#VID_320F&amp;PID_227C&amp;MI_00#7&amp;abc&amp;0&amp;0000#{guid}
     ///   -> HID\VID_320F&amp;PID_227C&amp;MI_00\7&amp;abc&amp;0&amp;0000
     /// </summary>
-    private static string? RawPathToEnumKey(string rawPath)
+    internal static string? RawPathToEnumKey(string rawPath)
     {
         if (string.IsNullOrWhiteSpace(rawPath))
             return null;

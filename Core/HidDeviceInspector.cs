@@ -53,10 +53,8 @@ internal static class HidDeviceInspector
         var snapshots = new List<HidInterfaceSnapshot>();
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (handle, dwType, name) in EnumerateRawInputDevices())
+        foreach (var (handle, dwType, name) in Input.RawInputDevices.Enumerate())
         {
-            if (string.IsNullOrEmpty(name))
-                continue;
 
             bool listed = ContainsPath(knownPaths, name);
             bool sameGroup = DeviceGrouping.GetGroupKey(name)
@@ -79,30 +77,22 @@ internal static class HidDeviceInspector
         return snapshots;
     }
 
-    public static IEnumerable<(IntPtr handle, uint dwType, string name)> EnumerateRawInputDevices()
+    /// <summary>
+    /// String de produto do firmware (HidD_GetProductString), quando o Windows deixa abrir a coleção.
+    /// </summary>
+    internal static string? TryGetProductString(string path)
     {
-        uint count = 0;
-        uint dwSize = (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICELIST>();
-        if (NativeMethods.GetRawInputDeviceList(IntPtr.Zero, ref count, dwSize) != 0 || count == 0)
-            yield break;
+        IntPtr handle = OpenHidQuery(path);
+        if (handle == NativeMethods.INVALID_HANDLE_VALUE || handle == IntPtr.Zero)
+            return null;
 
-        IntPtr list = Marshal.AllocHGlobal((int)(dwSize * count));
         try
         {
-            if (NativeMethods.GetRawInputDeviceList(list, ref count, dwSize) == unchecked((uint)-1))
-                yield break;
-
-            for (int i = 0; i < count; i++)
-            {
-                IntPtr ptr = new IntPtr(list.ToInt64() + (i * dwSize));
-                var item = Marshal.PtrToStructure<NativeMethods.RAWINPUTDEVICELIST>(ptr);
-                string name = GetRawDeviceName(item.hDevice);
-                yield return (item.hDevice, item.dwType, name);
-            }
+            return ReadHidString(NativeMethods.HidD_GetProductString, handle);
         }
         finally
         {
-            Marshal.FreeHGlobal(list);
+            NativeMethods.CloseHandle(handle);
         }
     }
 
@@ -512,35 +502,6 @@ internal static class HidDeviceInspector
             return null;
         string value = Encoding.Unicode.GetString(buffer).TrimEnd('\0').Trim();
         return string.IsNullOrWhiteSpace(value) ? null : value;
-    }
-
-    private static string GetRawDeviceName(IntPtr hDevice)
-    {
-        try
-        {
-            uint pcbSize = 0;
-            NativeMethods.GetRawInputDeviceInfo(hDevice, NativeMethods.RIDI_DEVICENAME, IntPtr.Zero, ref pcbSize);
-            if (pcbSize == 0 || pcbSize > 8192)
-                return string.Empty;
-
-            IntPtr pData = Marshal.AllocHGlobal((int)pcbSize * 2);
-            try
-            {
-                uint result = NativeMethods.GetRawInputDeviceInfo(
-                    hDevice, NativeMethods.RIDI_DEVICENAME, pData, ref pcbSize);
-                if (result == unchecked((uint)-1) || result == 0)
-                    return string.Empty;
-                return Marshal.PtrToStringAuto(pData) ?? string.Empty;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(pData);
-            }
-        }
-        catch
-        {
-            return string.Empty;
-        }
     }
 
     private static bool ContainsPath(IReadOnlyList<string> paths, string name)

@@ -4,7 +4,7 @@ using System.Text;
 
 namespace KeyNexus;
 
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
     // ══════════════════════════════════════
     // Raw Input Constants

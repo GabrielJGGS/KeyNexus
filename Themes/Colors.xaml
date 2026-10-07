@@ -1,0 +1,56 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Paleta -->
+    <Color x:Key="BgDark">#141220</Color>
+    <Color x:Key="BgSurface">#1A1728</Color>
+    <Color x:Key="BgCard">#201C2F</Color>
+    <Color x:Key="BgCardActive">#262040</Color>
+    <Color x:Key="BgElevated">#2A253B</Color>
+    <Color x:Key="BgHover">#342D49</Color>
+    <Color x:Key="BgInput">#191624</Color>
+    <Color x:Key="Accent">#8B5CF6</Color>
+    <Color x:Key="AccentHover">#9D76F8</Color>
+    <Color x:Key="AccentDim">#6D28D9</Color>
+    <Color x:Key="AccentLight">#C4B5FD</Color>
+    <Color x:Key="AccentSoft">#2E8B5CF6</Color>
+    <Color x:Key="TextPrimary">#F4F3F8</Color>
+    <Color x:Key="TextSecondary">#BDB7CC</Color>
+    <Color x:Key="TextMuted">#8A85A0</Color>
+    <Color x:Key="Border">#3D3650</Color>
+    <Color x:Key="BorderSubtle">#2C2640</Color>
+    <Color x:Key="Success">#34D399</Color>
+    <Color x:Key="SuccessSoft">#2234D399</Color>
+    <Color x:Key="Warning">#FBBF24</Color>
+    <Color x:Key="WarningSoft">#22FBBF24</Color>
+    <Color x:Key="Danger">#F87171</Color>
+
+    <SolidColorBrush x:Key="BgDarkBrush" Color="{StaticResource BgDark}"/>
+    <SolidColorBrush x:Key="BgSurfaceBrush" Color="{StaticResource BgSurface}"/>
+    <SolidColorBrush x:Key="BgCardBrush" Color="{StaticResource BgCard}"/>
+    <SolidColorBrush x:Key="BgCardActiveBrush" Color="{StaticResource BgCardActive}"/>
+    <SolidColorBrush x:Key="BgElevatedBrush" Color="{StaticResource BgElevated}"/>
+    <SolidColorBrush x:Key="BgHoverBrush" Color="{StaticResource BgHover}"/>
+    <SolidColorBrush x:Key="BgInputBrush" Color="{StaticResource BgInput}"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHover}"/>
+    <SolidColorBrush x:Key="AccentDimBrush" Color="{StaticResource AccentDim}"/>
+    <SolidColorBrush x:Key="AccentLightBrush" Color="{StaticResource AccentLight}"/>
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoft}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}"/>
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMuted}"/>
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource Border}"/>
+    <SolidColorBrush x:Key="BorderSubtleBrush" Color="{StaticResource BorderSubtle}"/>
+    <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource Success}"/>
+    <SolidColorBrush x:Key="SuccessSoftBrush" Color="{StaticResource SuccessSoft}"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource Warning}"/>
+    <SolidColorBrush x:Key="WarningSoftBrush" Color="{StaticResource WarningSoft}"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource Danger}"/>
+
+    <!-- Tipografia e ícones -->
+    <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+</ResourceDictionary>

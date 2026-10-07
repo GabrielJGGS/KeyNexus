@@ -1,0 +1,26 @@
+<Window x:Class="KeyNexus.TextPromptWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="KeyNexus" Width="440" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Style="{StaticResource AppWindow}">
+
+    <StackPanel Margin="24,20,24,20">
+        <TextBlock x:Name="txtHeading" FontSize="16" FontWeight="SemiBold"
+                   FontFamily="{StaticResource DisplayFont}" TextWrapping="Wrap"/>
+        <TextBlock x:Name="txtMessage" FontSize="12.5" Margin="0,6,0,14" TextWrapping="Wrap"
+                   Foreground="{StaticResource TextSecondaryBrush}"/>
+        <TextBox x:Name="txtValue" Style="{StaticResource TextInput}"/>
+
+        <Grid Margin="0,18,0,0">
+            <Button x:Name="btnClear" Content="Remover apelido" Style="{StaticResource GhostButton}"
+                    HorizontalAlignment="Left" Click="BtnClear_Click"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancelar" Style="{StaticResource SecondaryButton}" IsCancel="True"
+                        Margin="0,0,8,0"/>
+                <Button Content="Salvar" Style="{StaticResource ModernButton}" IsDefault="True"
+                        Click="BtnSave_Click"/>
+            </StackPanel>
+        </Grid>
+    </StackPanel>
+</Window>
