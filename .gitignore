@@ -57,3 +57,6 @@ BenchmarkDotNet.Artifacts/
 
 # DotNet SDK
 *.rsp
+
+# Cliente de atualização do executável publicado. Fica só na máquina do build.
+official/
