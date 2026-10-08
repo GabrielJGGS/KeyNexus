@@ -94,8 +94,24 @@ public partial class App : System.Windows.Application
         }
         catch
         {
+            // O arquivo ao lado do exe falhou: tenta o ícone embutido.
+        }
+
+        try
+        {
+            string? exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                using Icon? associated = Icon.ExtractAssociatedIcon(exePath);
+                if (associated != null)
+                    return (Icon)associated.Clone();
+            }
+        }
+        catch
+        {
             // Sem ícone próprio: usa o padrão.
         }
+
         return SystemIcons.Application;
     }
 
